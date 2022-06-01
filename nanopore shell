@@ -1,0 +1,46 @@
+＃ basecalling RNA
+guppy_basecaller --recursive --flowcell FLO-MIN106 --kit SQK-RNA002 -x cuda:0 --u_substitution 0 \
+-i fast5/ -s fastq --compress_fastq --disable_pings --num_callers 32 --min_qscore 7
+
+# basecalling cDNA
+guppy_basecaller --recursive --flowcell FLO-MIN106 --kit SQK-DCS109 -x cuda:0 -i fast5/ -s fastq --compress_fastq --disable_pings --num_callers 32 --min_qscore 7
+
+# merge fastq files
+zcat pass/*.fastq.gz | bgzip -@24 -c > all.fastq.gz
+
+
+# Align to viral , precise(minimap2)
+minimap2 -Y -k 8 -w 1 --splice -g 30000 -G 30000 -F 40000 -N 32 --splice-flank=no --max-chain-skip=40 -u n --MD 
+-a -t 24 --seconday=no {ref} bovine/fq/rna1.fastq.gz > bovine/sam/rna1.sam
+
+
+# Align to host genome (minimap2)
+for i in `ls -1 *.fastq.gz| sed s/.fastq.gz//`; do minimap2 -k 14 -w 1 -u n --MD -a -t 24 --secondary=no ~/Analysis/reference/bovine_dna.fa $i\.fastq.gz |samtools view -F 2048 |cut -f1,2,3 > $i\_dna.qname;done
+
+
+# polishment
+python TranscriptClean.py --sam {transcripts.sam} --genome {ref.fa} --outprefix {out} -t {threads} --deleteTmp
+
+
+#File transform (.sam to .bam)
+samtools view {inseq} -F 2048 -b -o {out}
+
+# reads sort
+samtools sort -@ 24 -o bovine/sorted/rna1.sorted.bam bovine/bam/rna1.bam 
+
+# alignment index
+samtools index {outprefilx}
+
+# bam to bed
+bedtools bamtobed -i {input} -split > {output}
+
+# subset diRNA bam file
+samtools view -N {in.qname} {in.bam} -o {out.bam} ; done
+
+# subseted diRNA bam file sort
+for i in `ls -1 *di.bam| sed s/di.bam//`; do samtools sort $i\di.bam > $i\di_sort.bam; done
+# subset diRNA bam file index
+for i in *_sort.bam; do samtools index $i -b ; done
+
+# get flanking sequence
+bedtools getfasta -fi {ref.fasta} -bed {in.bed} -name > {out.fa}; done
